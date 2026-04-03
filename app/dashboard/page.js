@@ -56,6 +56,14 @@ export default function Dashboard() {
     <p className="text-xl font-bold">Leaderboard</p>
     <p className="text-gray-300 text-sm mt-1">See who's winning</p>
   </button>
+  <button
+    onClick={() => router.push('/my-picks')}
+    className="bg-purple-700 p-6 rounded-lg text-center hover:bg-purple-800"
+  >
+    <p className="text-2xl mb-2">📋</p>
+    <p className="text-xl font-bold">My Picks</p>
+    <p className="text-gray-300 text-sm mt-1">Active picks & history</p>
+  </button>
 </div>
       </div>
     </div>
