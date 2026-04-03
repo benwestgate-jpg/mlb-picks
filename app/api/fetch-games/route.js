@@ -44,11 +44,12 @@ export async function GET() {
         game_date: tomorrowStr,
         away_team: awayTeam,
         home_team: homeTeam,
-        game_time: new Date(game.commence_time).toLocaleTimeString('en-US', {
-          hour: 'numeric',
-          minute: '2-digit',
-          timeZone: 'America/Phoenix'
-        }),
+game_time: new Date(game.commence_time).toLocaleTimeString('en-US', {
+  hour: 'numeric',
+  minute: '2-digit',
+  timeZone: 'America/Phoenix'
+}),
+game_time_utc: game.commence_time,
         ml_away: h2h?.outcomes.find(o => o.name === awayTeam)?.price ?? null,
         ml_home: h2h?.outcomes.find(o => o.name === homeTeam)?.price ?? null,
         rl_away: spreads?.outcomes.find(o => o.name === awayTeam)?.price ?? null,
