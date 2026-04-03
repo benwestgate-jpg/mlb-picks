@@ -54,6 +54,18 @@ const today = tomorrow.toISOString().split('T')[0]
 
   const submitPicks = async () => {
     if (!user) return
+    // Check if user already has picks for today
+const today = new Date().toISOString().split('T')[0]
+const { data: existingPicks } = await supabase
+  .from('picks')
+  .select('id')
+  .eq('user_id', user.id)
+  .eq('game_date', today)
+
+if (existingPicks && existingPicks.length > 0) {
+  alert('You have already submitted picks for today!')
+  return
+}
     const today = new Date().toISOString().split('T')[0]
     
     const picksToInsert = []
