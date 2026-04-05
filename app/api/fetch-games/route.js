@@ -7,75 +7,64 @@ const supabase = createClient(
 
 export async function GET() {
   try {
-    const apiKey = process.env.ODDS_API_KEY
+    // Get tomorrow's date in Arizona time
+    const now = new Date()
+    const tomorrowAZ = new Date(now.toLocaleString('en-US', { timeZone: 'America/Phoenix' }))
+    tomorrowAZ.setDate(tomorrowAZ.getDate() + 1)
+    const tomorrowStr = tomorrowAZ.toLocaleDateString('en-CA', { timeZone: 'America/Phoenix' })
 
-    // Fetch odds from The Odds API
-    const oddsRes = await fetch(
-      `https://api.the-odds-api.com/v4/sports/baseball_mlb/odds?apiKey=${apiKey}&regions=us&markets=h2h,spreads,totals&oddsFormat=american&bookmakers=draftkings`
+    // Fetch ALL tomorrow's games from MLB Stats API (free, no key needed)
+    const mlbRes = await fetch(
+      `https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=${tomorrowStr}`
     )
-    const oddsData = await oddsRes.json()
+    const mlbData = await mlbRes.json()
 
-    if (!oddsData || !Array.isArray(oddsData)) {
-      return Response.json({ error: 'No odds data returned' }, { status: 500 })
+    if (!mlbData.dates || mlbData.dates.length === 0) {
+      return Response.json({ message: 'No MLB games found for tomorrow', date: tomorrowStr })
     }
 
-    // Get tomorrow's date
-    const tomorrow = new Date()
-    tomorrow.setDate(tomorrow.getDate() + 1)
-    const tomorrowStr = tomorrow.toISOString().split('T')[0]
+    const games = mlbData.dates[0].games
 
-    // Filter for tomorrow's games only
-    const tomorrowGames = oddsData.filter(game => {
-      const gameDate = new Date(game.commence_time).toISOString().split('T')[0]
-      return gameDate === tomorrowStr
-    })
-
-    // Format and insert into Supabase
-    const gamesToInsert = tomorrowGames.map(game => {
-      const dk = game.bookmakers[0]
-      const h2h = dk?.markets.find(m => m.key === 'h2h')
-      const spreads = dk?.markets.find(m => m.key === 'spreads')
-      const totals = dk?.markets.find(m => m.key === 'totals')
-
-      const awayTeam = game.away_team
-      const homeTeam = game.home_team
+    const gamesToInsert = games.map(game => {
+      const gameTimeUTC = game.gameDate
+      const gameTimeAZ = new Date(gameTimeUTC).toLocaleTimeString('en-US', {
+        hour: 'numeric',
+        minute: '2-digit',
+        timeZone: 'America/Phoenix'
+      })
 
       return {
         game_date: tomorrowStr,
-        away_team: awayTeam,
-        home_team: homeTeam,
-game_time: new Date(game.commence_time).toLocaleTimeString('en-US', {
-  hour: 'numeric',
-  minute: '2-digit',
-  timeZone: 'America/Phoenix'
-}),
-game_time_utc: game.commence_time,
-        ml_away: h2h?.outcomes.find(o => o.name === awayTeam)?.price ?? null,
-        ml_home: h2h?.outcomes.find(o => o.name === homeTeam)?.price ?? null,
-        rl_away: spreads?.outcomes.find(o => o.name === awayTeam)?.price ?? null,
-rl_home: spreads?.outcomes.find(o => o.name === homeTeam)?.price ?? null,
-rl_away_point: spreads?.outcomes.find(o => o.name === awayTeam)?.point ?? null,
-rl_home_point: spreads?.outcomes.find(o => o.name === homeTeam)?.point ?? null,
-        over_under: totals?.outcomes.find(o => o.name === 'Over')?.point ?? null,
-        over_odds: totals?.outcomes.find(o => o.name === 'Over')?.price ?? null,
-        under_odds: totals?.outcomes.find(o => o.name === 'Under')?.price ?? null,
+        away_team: game.teams.away.team.name,
+        home_team: game.teams.home.team.name,
+        game_time: gameTimeAZ,
+        game_time_utc: gameTimeUTC,
+        game_pk: game.gamePk,
+        ml_away: null,
+        ml_home: null,
+        rl_away: null,
+        rl_home: null,
+        rl_away_point: null,
+        rl_home_point: null,
+        over_under: null,
+        over_odds: null,
+        under_odds: null,
         away_score: null,
         home_score: null,
-        status: 'scheduled',
-        game_pk: null
+        status: 'scheduled'
       }
     })
 
-    // Delete tomorrow's existing games first to avoid duplicates
+    // Delete tomorrow's existing games first
     await supabase.from('games').delete().eq('game_date', tomorrowStr)
 
-    // Insert new games
+    // Insert all games
     const { error } = await supabase.from('games').insert(gamesToInsert)
 
     if (error) return Response.json({ error: error.message }, { status: 500 })
 
-    return Response.json({ 
-      success: true, 
+    return Response.json({
+      success: true,
       games_inserted: gamesToInsert.length,
       date: tomorrowStr
     })
