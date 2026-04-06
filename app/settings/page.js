@@ -14,7 +14,15 @@ export default function Settings() {
   const [newPoolName, setNewPoolName] = useState('')
   const [oddsFormat, setOddsFormat] = useState('american')
   const [leaderboardSort, setLeaderboardSort] = useState('points')
+  const [scoringType, setScoringType] = useState('points')
   const [countLosses, setCountLosses] = useState('true')
+  const [dailyBalance, setDailyBalance] = useState(1000)
+  const [parlayEnabled, setParlayEnabled] = useState('false')
+  const [parlayMaxPicks, setParlayMaxPicks] = useState(4)
+  const [pickLimitEnabled, setPickLimitEnabled] = useState(false)
+  const [pickLimitPct, setPickLimitPct] = useState(50)
+  const [startDate, setStartDate] = useState('')
+  const [endDate, setEndDate] = useState('')
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState(null)
   const [showNameModal, setShowNameModal] = useState(false)
@@ -42,7 +50,15 @@ export default function Settings() {
       setNewDisplayName(mem.username || '')
       setOddsFormat(mem.pools?.odds_format || 'american')
       setLeaderboardSort(mem.pools?.leaderboard_sort || 'points')
+      setScoringType(mem.pools?.scoring_type || 'points')
       setCountLosses(mem.pools?.count_losses?.toString() || 'true')
+      setDailyBalance(mem.pools?.daily_balance || 1000)
+      setParlayEnabled(mem.pools?.parlay_enabled?.toString() || 'false')
+      setParlayMaxPicks(mem.pools?.parlay_max_picks || 4)
+      setPickLimitEnabled(!!mem.pools?.pick_limit_pct)
+      setPickLimitPct(mem.pools?.pick_limit_pct || 50)
+      setStartDate(mem.pools?.start_date || '')
+      setEndDate(mem.pools?.end_date || '')
 
       const { data: allMembers } = await supabase
         .from('pool_members')
@@ -60,12 +76,12 @@ export default function Settings() {
     setTimeout(() => setMessage(null), 3000)
   }
 
+  // Check if pool has started — lock scoring settings
+  const poolStarted = pool?.start_date && new Date().toLocaleDateString('en-CA', { timeZone: 'America/Phoenix' }) >= pool.start_date
+
   const handleSavePoolName = async () => {
     setSaving(true)
-    const { error } = await supabase
-      .from('pools')
-      .update({ name: newPoolName })
-      .eq('id', pool.id)
+    const { error } = await supabase.from('pools').update({ name: newPoolName }).eq('id', pool.id)
     if (error) showMessage('Error saving: ' + error.message)
     else { setPool(prev => ({ ...prev, name: newPoolName })); showMessage('Pool name updated!') }
     setSaving(false)
@@ -73,10 +89,7 @@ export default function Settings() {
 
   const handleSaveDisplayName = async () => {
     if (!newDisplayName.trim()) return
-    const { error } = await supabase
-      .from('pool_members')
-      .update({ username: newDisplayName.trim() })
-      .eq('id', membership.id)
+    const { error } = await supabase.from('pool_members').update({ username: newDisplayName.trim() }).eq('id', membership.id)
     if (error) showMessage('Error saving: ' + error.message)
     else {
       setMembership(prev => ({ ...prev, username: newDisplayName.trim() }))
@@ -86,22 +99,37 @@ export default function Settings() {
     }
   }
 
+  const handleSaveScoring = async () => {
+    if (poolStarted) return
+    const { error } = await supabase.from('pools').update({
+      scoring_type: scoringType,
+      odds_format: oddsFormat,
+      leaderboard_sort: scoringType,
+      daily_balance: dailyBalance,
+      count_losses: countLosses,
+      parlay_enabled: parlayEnabled,
+      parlay_max_picks: parlayMaxPicks,
+      pick_limit_pct: pickLimitEnabled ? pickLimitPct : null,
+    }).eq('id', pool.id)
+    if (error) showMessage('Error saving: ' + error.message)
+    else {
+      setPool(prev => ({ ...prev, scoring_type: scoringType, odds_format: oddsFormat, leaderboard_sort: scoringType, daily_balance: dailyBalance, count_losses: countLosses, parlay_enabled: parlayEnabled, parlay_max_picks: parlayMaxPicks, pick_limit_pct: pickLimitEnabled ? pickLimitPct : null }))
+      showMessage('Scoring settings saved!')
+    }
+  }
+
+  const handleSaveTimeline = async () => {
+    if (poolStarted) return
+    const { error } = await supabase.from('pools').update({
+      start_date: startDate || null,
+      end_date: endDate || null,
+    }).eq('id', pool.id)
+    if (error) showMessage('Error saving: ' + error.message)
+    else { setPool(prev => ({ ...prev, start_date: startDate, end_date: endDate })); showMessage('Timeline saved!') }
+  }
+
   const handleOddsFormat = async (format) => {
     setOddsFormat(format)
-    await supabase.from('pools').update({ odds_format: format }).eq('id', pool.id)
-    showMessage('Odds format updated!')
-  }
-
-  const handleLeaderboardSort = async (sort) => {
-    setLeaderboardSort(sort)
-    await supabase.from('pools').update({ leaderboard_sort: sort }).eq('id', pool.id)
-    showMessage('Leaderboard sort updated!')
-  }
-
-  const handleCountLosses = async (value) => {
-    setCountLosses(value)
-    await supabase.from('pools').update({ count_losses: value }).eq('id', pool.id)
-    showMessage('Loss setting updated!')
   }
 
   const handleRemoveMember = async (memberId) => {
@@ -133,14 +161,13 @@ export default function Settings() {
 
   if (loading) return <div className="min-h-screen bg-gray-900"></div>
 
-  const tabs = isAdmin ? ['users', 'scoring', 'games', 'corrections'] : ['users']
-  const tabLabels = { users: '👥 Users', scoring: '📊 Scoring', games: '⚾ Games', corrections: '🔧 Corrections' }
+  const tabs = isAdmin ? ['users', 'scoring', 'timeline', 'games', 'corrections'] : ['users']
+  const tabLabels = { users: '👥 Users', scoring: '📊 Scoring', timeline: '📅 Timeline', games: '⚾ Games', corrections: '🔧 Corrections' }
 
   return (
     <div className="min-h-screen bg-gray-900 text-white p-8">
       <div className="max-w-2xl mx-auto">
 
-        {/* Header */}
         <div className="flex justify-between items-center mb-2">
           <h1 className="text-3xl font-bold">⚙️ Settings</h1>
           <button onClick={() => router.push('/dashboard')} className="bg-gray-600 px-4 py-2 rounded hover:bg-gray-700">Back</button>
@@ -148,9 +175,7 @@ export default function Settings() {
         <p className="text-gray-400 text-sm mb-6">{pool?.name} · {membership?.role}</p>
 
         {message && (
-          <div className="bg-green-800 text-green-200 px-4 py-3 rounded mb-6">
-            {message}
-          </div>
+          <div className="bg-green-800 text-green-200 px-4 py-3 rounded mb-6">{message}</div>
         )}
 
         {/* Display Name Modal */}
@@ -168,30 +193,20 @@ export default function Settings() {
                 maxLength={20}
               />
               <div className="flex gap-2">
-                <button
-                  onClick={() => setShowNameModal(false)}
-                  className="flex-1 bg-gray-600 px-4 py-2 rounded hover:bg-gray-700 font-bold"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleSaveDisplayName}
-                  className="flex-1 bg-blue-600 px-4 py-2 rounded hover:bg-blue-700 font-bold"
-                >
-                  Save
-                </button>
+                <button onClick={() => setShowNameModal(false)} className="flex-1 bg-gray-600 px-4 py-2 rounded hover:bg-gray-700 font-bold">Cancel</button>
+                <button onClick={handleSaveDisplayName} className="flex-1 bg-blue-600 px-4 py-2 rounded hover:bg-blue-700 font-bold">Save</button>
               </div>
             </div>
           </div>
         )}
 
         {/* Tabs */}
-        <div className="flex mb-6 bg-gray-800 rounded-lg p-1 gap-1">
+        <div className="flex mb-6 bg-gray-800 rounded-lg p-1 gap-1 flex-wrap">
           {tabs.map(tab => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
-              className={`flex-1 py-2 rounded-md font-bold text-sm transition-colors ${activeTab === tab ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`}
+              className={`flex-1 py-2 rounded-md font-bold text-xs transition-colors ${activeTab === tab ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`}
             >
               {tabLabels[tab]}
             </button>
@@ -201,7 +216,6 @@ export default function Settings() {
         {/* USERS TAB */}
         {activeTab === 'users' && (
           <div className="space-y-4">
-
             <div className="bg-gray-800 rounded-lg p-6">
               <h2 className="text-lg font-bold mb-3">Members ({members.length})</h2>
               <div className="space-y-2">
@@ -216,12 +230,7 @@ export default function Settings() {
                       <p className="text-gray-400 text-xs">{member.role}</p>
                     </div>
                     {isAdmin && member.user_id !== user.id && (
-                      <button
-                        onClick={() => handleRemoveMember(member.id)}
-                        className="bg-red-700 hover:bg-red-600 text-white text-xs px-3 py-1 rounded font-bold"
-                      >
-                        Kick
-                      </button>
+                      <button onClick={() => handleRemoveMember(member.id)} className="bg-red-700 hover:bg-red-600 text-white text-xs px-3 py-1 rounded font-bold">Kick</button>
                     )}
                   </div>
                 ))}
@@ -230,18 +239,8 @@ export default function Settings() {
 
             {!isAdmin && (
               <div className="flex gap-3">
-                <button
-                  onClick={() => setShowNameModal(true)}
-                  className="flex-1 bg-gray-700 hover:bg-gray-600 px-4 py-3 rounded-lg font-bold"
-                >
-                  ✏️ Change Display Name
-                </button>
-                <button
-                  onClick={handleLeavePool}
-                  className="flex-1 bg-red-700 hover:bg-red-600 px-4 py-3 rounded-lg font-bold"
-                >
-                  🚪 Leave Pool
-                </button>
+                <button onClick={() => setShowNameModal(true)} className="flex-1 bg-gray-700 hover:bg-gray-600 px-4 py-3 rounded-lg font-bold">✏️ Change Display Name</button>
+                <button onClick={handleLeavePool} className="flex-1 bg-red-700 hover:bg-red-600 px-4 py-3 rounded-lg font-bold">🚪 Leave Pool</button>
               </div>
             )}
 
@@ -251,133 +250,197 @@ export default function Settings() {
                   <h2 className="text-lg font-bold mb-3">Invite Code</h2>
                   <div className="flex items-center gap-3 mb-3">
                     <span className="text-3xl font-bold text-blue-400 tracking-widest">{pool?.invite_code}</span>
-                    <button
-                      onClick={() => { navigator.clipboard.writeText(pool?.invite_code); showMessage('Copied!') }}
-                      className="bg-gray-600 px-3 py-1 rounded text-sm hover:bg-gray-700"
-                    >
-                      Copy
-                    </button>
+                    <button onClick={() => { navigator.clipboard.writeText(pool?.invite_code); showMessage('Copied!') }} className="bg-gray-600 px-3 py-1 rounded text-sm hover:bg-gray-700">Copy</button>
                   </div>
                   <p className="text-gray-400 text-sm mb-4">Share this code with friends to invite them</p>
-                  <button
-                    onClick={handleRegenerateCode}
-                    className="bg-yellow-600 px-4 py-2 rounded hover:bg-yellow-700 font-bold text-sm"
-                  >
-                    Regenerate Code
-                  </button>
+                  <button onClick={handleRegenerateCode} className="bg-yellow-600 px-4 py-2 rounded hover:bg-yellow-700 font-bold text-sm">Regenerate Code</button>
                 </div>
 
                 <div className="bg-gray-800 rounded-lg p-6">
                   <h2 className="text-lg font-bold mb-3">Pool Name</h2>
                   <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={newPoolName}
-                      onChange={(e) => setNewPoolName(e.target.value)}
-                      className="flex-1 p-3 rounded bg-gray-700 text-white border border-gray-600"
-                    />
-                    <button
-                      onClick={handleSavePoolName}
-                      disabled={saving}
-                      className="bg-blue-600 px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50"
-                    >
-                      Save
-                    </button>
+                    <input type="text" value={newPoolName} onChange={(e) => setNewPoolName(e.target.value)} className="flex-1 p-3 rounded bg-gray-700 text-white border border-gray-600" />
+                    <button onClick={handleSavePoolName} disabled={saving} className="bg-blue-600 px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50">Save</button>
                   </div>
                 </div>
 
                 <div className="flex gap-3">
-                  <button
-                    onClick={() => setShowNameModal(true)}
-                    className="flex-1 bg-gray-700 hover:bg-gray-600 px-4 py-3 rounded-lg font-bold"
-                  >
-                    ✏️ Change Display Name
-                  </button>
-                  <button
-                    onClick={handleDeletePool}
-                    className="flex-1 bg-red-700 hover:bg-red-600 px-4 py-3 rounded-lg font-bold"
-                  >
-                    🗑️ Delete Pool
-                  </button>
+                  <button onClick={() => setShowNameModal(true)} className="flex-1 bg-gray-700 hover:bg-gray-600 px-4 py-3 rounded-lg font-bold">✏️ Change Display Name</button>
+                  <button onClick={handleDeletePool} className="flex-1 bg-red-700 hover:bg-red-600 px-4 py-3 rounded-lg font-bold">🗑️ Delete Pool</button>
                 </div>
               </>
             )}
-
           </div>
         )}
 
         {/* SCORING TAB */}
         {activeTab === 'scoring' && (
           <div className="space-y-4">
-
-            <div className="bg-gray-800 rounded-lg p-6">
-              <h2 className="text-lg font-bold mb-1">Odds Format</h2>
-              <p className="text-gray-400 text-sm mb-4">How odds are displayed to all pool members</p>
-              <div className="flex gap-3">
-                <button
-                  onClick={() => handleOddsFormat('american')}
-                  className={`flex-1 p-3 rounded font-bold ${oddsFormat === 'american' ? 'bg-blue-600' : 'bg-gray-700 hover:bg-gray-600'}`}
-                >
-                  American
-                  <p className="text-sm font-normal mt-1">+150 / -180</p>
-                </button>
-                <button
-                  onClick={() => handleOddsFormat('multiplier')}
-                  className={`flex-1 p-3 rounded font-bold ${oddsFormat === 'multiplier' ? 'bg-blue-600' : 'bg-gray-700 hover:bg-gray-600'}`}
-                >
-                  Multiplier
-                  <p className="text-sm font-normal mt-1">2.50x / 1.56x</p>
-                </button>
-              </div>
-            </div>
-
-            <div className="bg-gray-800 rounded-lg p-6">
-              <h2 className="text-lg font-bold mb-1">Leaderboard Sort</h2>
-              <p className="text-gray-400 text-sm mb-4">Sets which tab is marked ACTIVE on the leaderboard for all members</p>
-              <div className="flex gap-3">
-                {[
-                  { key: 'points', label: 'Points', sub: 'Hypothetical $100 bets' },
-                  { key: 'wins', label: 'Total Wins', sub: 'Raw win count' },
-                  { key: 'winpct', label: 'Win %', sub: 'Wins ÷ total picks' },
-                ].map(({ key, label, sub }) => (
-                  <button
-                    key={key}
-                    onClick={() => handleLeaderboardSort(key)}
-                    className={`flex-1 p-3 rounded font-bold text-sm ${leaderboardSort === key ? 'bg-blue-600' : 'bg-gray-700 hover:bg-gray-600'}`}
-                  >
-                    {label}
-                    {leaderboardSort === key
-                      ? <span className="block text-xs font-normal text-blue-200 mt-1">ACTIVE</span>
-                      : <span className="block text-xs font-normal text-gray-400 mt-1">{sub}</span>
-                    }
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {leaderboardSort === 'points' && (
-              <div className="bg-gray-800 rounded-lg p-6">
-                <h2 className="text-lg font-bold mb-1">Count Losses?</h2>
-                <p className="text-gray-400 text-sm mb-4">When enabled, each loss deducts 100 points. When disabled, losses count as 0.</p>
-                <div className="flex gap-3">
-                  <button
-                    onClick={() => handleCountLosses('true')}
-                    className={`flex-1 p-3 rounded font-bold ${countLosses === 'true' ? 'bg-blue-600' : 'bg-gray-700 hover:bg-gray-600'}`}
-                  >
-                    Yes
-                    <p className="text-sm font-normal mt-1">Losses = -100 pts</p>
-                  </button>
-                  <button
-                    onClick={() => handleCountLosses('false')}
-                    className={`flex-1 p-3 rounded font-bold ${countLosses === 'false' ? 'bg-blue-600' : 'bg-gray-700 hover:bg-gray-600'}`}
-                  >
-                    No
-                    <p className="text-sm font-normal mt-1">Losses = 0 pts</p>
-                  </button>
-                </div>
+            {poolStarted && (
+              <div className="bg-yellow-900 border border-yellow-600 rounded-lg px-4 py-3 text-yellow-200 text-sm font-bold">
+                🔒 Pool has started — scoring settings are locked
               </div>
             )}
 
+            <div className={`space-y-4 ${poolStarted ? 'opacity-50 pointer-events-none' : ''}`}>
+
+              {/* Scoring Type */}
+              <div className="bg-gray-800 rounded-lg p-6">
+                <h2 className="text-lg font-bold mb-1">Scoring Type</h2>
+                <p className="text-gray-400 text-sm mb-4">How this pool determines the winner</p>
+                <div className="flex gap-2">
+                  {[
+                    { key: 'points', label: '💰 Points', sub: 'Stake-based' },
+                    { key: 'wins', label: '🏆 Wins', sub: 'Total wins' },
+                    { key: 'winpct', label: '📊 Win %', sub: 'Win rate' },
+                  ].map(({ key, label, sub }) => (
+                    <button
+                      key={key}
+                      onClick={() => setScoringType(key)}
+                      className={`flex-1 p-3 rounded font-bold text-sm ${scoringType === key ? 'bg-blue-600' : 'bg-gray-700 hover:bg-gray-600'}`}
+                    >
+                      {label}
+                      <p className="text-xs font-normal mt-1 text-gray-300">{sub}</p>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Odds Format — only for points */}
+              {scoringType === 'points' && (
+                <div className="bg-gray-800 rounded-lg p-6">
+                  <h2 className="text-lg font-bold mb-1">Odds Format</h2>
+                  <p className="text-gray-400 text-sm mb-4">How odds are displayed to all pool members</p>
+                  <div className="flex gap-3">
+                    <button onClick={() => handleOddsFormat('american')} className={`flex-1 p-3 rounded font-bold ${oddsFormat === 'american' ? 'bg-blue-600' : 'bg-gray-700 hover:bg-gray-600'}`}>
+                      American
+                      <p className="text-sm font-normal mt-1">+150 / -180</p>
+                    </button>
+                    <button onClick={() => handleOddsFormat('multiplier')} className={`flex-1 p-3 rounded font-bold ${oddsFormat === 'multiplier' ? 'bg-blue-600' : 'bg-gray-700 hover:bg-gray-600'}`}>
+                      Multiplier
+                      <p className="text-sm font-normal mt-1">2.50x / 1.56x</p>
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Points-specific */}
+              {scoringType === 'points' && (
+                <>
+                  <div className="bg-gray-800 rounded-lg p-6">
+                    <h2 className="text-lg font-bold mb-1">Daily Balance</h2>
+                    <p className="text-gray-400 text-sm mb-4">Points each player gets to stake per day</p>
+                    <div className="flex gap-2 flex-wrap">
+                      {[100, 200, 500, 1000, 2000, 5000].map(val => (
+                        <button key={val} onClick={() => setDailyBalance(val)} className={`px-4 py-2 rounded font-bold text-sm ${dailyBalance === val ? 'bg-blue-600' : 'bg-gray-700 hover:bg-gray-600'}`}>{val}</button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="bg-gray-800 rounded-lg p-6">
+                    <h2 className="text-lg font-bold mb-1">Count Losses?</h2>
+                    <p className="text-gray-400 text-sm mb-4">When enabled, losses deduct your stake. When disabled, losses count as 0.</p>
+                    <div className="flex gap-3">
+                      <button onClick={() => setCountLosses('true')} className={`flex-1 p-3 rounded font-bold ${countLosses === 'true' ? 'bg-blue-600' : 'bg-gray-700 hover:bg-gray-600'}`}>
+                        Yes
+                        <p className="text-sm font-normal mt-1">Losses = -stake</p>
+                      </button>
+                      <button onClick={() => setCountLosses('false')} className={`flex-1 p-3 rounded font-bold ${countLosses === 'false' ? 'bg-blue-600' : 'bg-gray-700 hover:bg-gray-600'}`}>
+                        No
+                        <p className="text-sm font-normal mt-1">Losses = 0 pts</p>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="bg-gray-800 rounded-lg p-6">
+                    <h2 className="text-lg font-bold mb-1">Parlays</h2>
+                    <p className="text-gray-400 text-sm mb-4">Allow players to combine picks into parlays</p>
+                    <div className="flex gap-3 mb-3">
+                      <button onClick={() => setParlayEnabled('true')} className={`flex-1 p-3 rounded font-bold ${parlayEnabled === 'true' ? 'bg-blue-600' : 'bg-gray-700 hover:bg-gray-600'}`}>Allowed</button>
+                      <button onClick={() => setParlayEnabled('false')} className={`flex-1 p-3 rounded font-bold ${parlayEnabled === 'false' ? 'bg-blue-600' : 'bg-gray-700 hover:bg-gray-600'}`}>Not Allowed</button>
+                    </div>
+                    {parlayEnabled === 'true' && (
+                      <>
+                        <p className="text-gray-400 text-sm mb-2">Max parlay picks</p>
+                        <div className="flex gap-2">
+                          {[2, 3, 4, 5, 6].map(val => (
+                            <button key={val} onClick={() => setParlayMaxPicks(val)} className={`flex-1 py-2 rounded font-bold text-sm ${parlayMaxPicks === val ? 'bg-blue-600' : 'bg-gray-700 hover:bg-gray-600'}`}>{val}</button>
+                          ))}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </>
+              )}
+
+              {/* Win% specific */}
+              {scoringType === 'winpct' && (
+                <div className="bg-gray-800 rounded-lg p-6">
+                  <h2 className="text-lg font-bold mb-1">Pick % Threshold</h2>
+                  <p className="text-gray-400 text-sm mb-4">Players below this pick rate are marked disqualified on the leaderboard</p>
+                  <div className="flex items-center gap-3 mb-3">
+                    <button onClick={() => setPickLimitEnabled(!pickLimitEnabled)} className={`px-4 py-2 rounded font-bold text-sm ${pickLimitEnabled ? 'bg-blue-600' : 'bg-gray-700 hover:bg-gray-600'}`}>
+                      {pickLimitEnabled ? 'Enabled' : 'Disabled'}
+                    </button>
+                  </div>
+                  {pickLimitEnabled && (
+                    <div className="flex gap-2 flex-wrap">
+                      {[25, 50, 75, 100, 125, 150].map(val => (
+                        <button key={val} onClick={() => setPickLimitPct(val)} className={`px-3 py-2 rounded font-bold text-sm ${pickLimitPct === val ? 'bg-blue-600' : 'bg-gray-700 hover:bg-gray-600'}`}>{val}%</button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+            </div>
+
+            {!poolStarted && (
+              <button onClick={handleSaveScoring} className="w-full p-3 bg-blue-600 rounded font-bold hover:bg-blue-700">
+                Save Scoring Settings
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* TIMELINE TAB */}
+        {activeTab === 'timeline' && (
+          <div className="space-y-4">
+            {poolStarted && (
+              <div className="bg-yellow-900 border border-yellow-600 rounded-lg px-4 py-3 text-yellow-200 text-sm font-bold">
+                🔒 Pool has started — timeline is locked
+              </div>
+            )}
+
+            <div className={`space-y-4 ${poolStarted ? 'opacity-50 pointer-events-none' : ''}`}>
+              <div className="bg-gray-800 rounded-lg p-6">
+                <h2 className="text-lg font-bold mb-1">Start Date</h2>
+                <p className="text-gray-400 text-sm mb-3">Players can't make picks until this date. Leave blank for open-ended.</p>
+                <input
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                  className="w-full p-3 rounded bg-gray-700 text-white border border-gray-600"
+                />
+              </div>
+
+              <div className="bg-gray-800 rounded-lg p-6">
+                <h2 className="text-lg font-bold mb-1">End Date</h2>
+                <p className="text-gray-400 text-sm mb-3">Pool freezes after this date. Leave blank for open-ended.</p>
+                <input
+                  type="date"
+                  value={endDate}
+                  onChange={(e) => setEndDate(e.target.value)}
+                  className="w-full p-3 rounded bg-gray-700 text-white border border-gray-600"
+                />
+              </div>
+            </div>
+
+            {!poolStarted && (
+              <button onClick={handleSaveTimeline} className="w-full p-3 bg-blue-600 rounded font-bold hover:bg-blue-700">
+                Save Timeline
+              </button>
+            )}
           </div>
         )}
 
