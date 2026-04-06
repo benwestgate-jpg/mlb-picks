@@ -9,10 +9,19 @@ export default function Picks() {
   const [tomorrowGames, setTomorrowGames] = useState([])
   const [activeTab, setActiveTab] = useState('today')
   const [loading, setLoading] = useState(true)
-  const [userPicks, setUserPicks] = useState({})
+  const [todayPicks, setTodayPicks] = useState({})
+  const [tomorrowPicks, setTomorrowPicks] = useState({})
   const [submitting, setSubmitting] = useState(false)
   const [showTomorrow, setShowTomorrow] = useState(false)
+  const [oddsFormat, setOddsFormat] = useState('american')
   const router = useRouter()
+
+  const getTodayStr = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Phoenix' })
+  const getTomorrowStr = () => {
+    const d = new Date()
+    d.setDate(d.getDate() + 1)
+    return d.toLocaleDateString('en-CA', { timeZone: 'America/Phoenix' })
+  }
 
   const todayLabel = new Date().toLocaleDateString('en-US', {
     weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
@@ -28,23 +37,23 @@ export default function Picks() {
     })
   })()
 
-  const getTodayStr = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Phoenix' })
-  const getTomorrowStr = () => {
-    const d = new Date()
-    d.setDate(d.getDate() + 1)
-    return d.toLocaleDateString('en-CA', { timeZone: 'America/Phoenix' })
-  }
-
   useEffect(() => {
     const init = async () => {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) { router.push('/'); return }
       setUser(user)
 
-      // Check if it's past 6 PM Arizona time
       const nowAZ = new Date().toLocaleString('en-US', { timeZone: 'America/Phoenix' })
       const hourAZ = new Date(nowAZ).getHours()
       setShowTomorrow(hourAZ >= 18)
+
+      const { data: mem } = await supabase
+        .from('pool_members')
+        .select('*, pools(*)')
+        .eq('user_id', user.id)
+        .single()
+
+      if (mem?.pools?.odds_format) setOddsFormat(mem.pools.odds_format)
 
       await fetchGames()
       await fetchExistingPicks(user.id)
@@ -75,24 +84,35 @@ export default function Picks() {
 
   const fetchExistingPicks = async (userId) => {
     const todayStr = getTodayStr()
-    const { data } = await supabase
+    const tomorrowStr = getTomorrowStr()
+
+    const { data: todayData } = await supabase
       .from('picks')
       .select('*')
       .eq('user_id', userId)
       .eq('game_date', todayStr)
 
-    if (data) {
-      const picksMap = {}
-      data.forEach(pick => {
-        if (!picksMap[pick.game_id]) picksMap[pick.game_id] = {}
-        picksMap[pick.game_id][pick.pick_type] = {
+    const { data: tomorrowData } = await supabase
+      .from('picks')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('game_date', tomorrowStr)
+
+    const buildMap = (data) => {
+      const map = {}
+      data?.forEach(pick => {
+        if (!map[pick.game_id]) map[pick.game_id] = {}
+        map[pick.game_id][pick.pick_type] = {
           pick: pick.pick,
           odds: pick.odds,
           saved: true
         }
       })
-      setUserPicks(picksMap)
+      return map
     }
+
+    setTodayPicks(buildMap(todayData))
+    setTomorrowPicks(buildMap(tomorrowData))
   }
 
   const isGameLocked = (game) => {
@@ -102,8 +122,15 @@ export default function Picks() {
 
   const formatOdds = (odds) => {
     if (!odds) return ''
+    if (oddsFormat === 'multiplier') {
+      if (odds > 0) return `${((odds / 100) + 1).toFixed(2)}x`
+      return `${((100 / Math.abs(odds)) + 1).toFixed(2)}x`
+    }
     return odds > 0 ? `+${odds}` : `${odds}`
   }
+
+  const userPicks = activeTab === 'today' ? todayPicks : tomorrowPicks
+  const setUserPicks = activeTab === 'today' ? setTodayPicks : setTomorrowPicks
 
   const handlePick = (game, category, pick, odds) => {
     if (isGameLocked(game)) {
@@ -125,7 +152,8 @@ export default function Picks() {
   const submitPicks = async () => {
     if (!user) return
     setSubmitting(true)
-    const todayStr = getTodayStr()
+
+    const gameDateStr = activeTab === 'today' ? getTodayStr() : getTomorrowStr()
     const picksToUpsert = []
 
     for (const [gameId, categories] of Object.entries(userPicks)) {
@@ -136,7 +164,7 @@ export default function Picks() {
           game_id: parseInt(gameId),
           pick: pickData.pick,
           pick_type: category,
-          game_date: todayStr,
+          game_date: gameDateStr,
           result: 'pending',
           odds: pickData.odds || null
         })
@@ -156,7 +184,7 @@ export default function Picks() {
         .eq('user_id', user.id)
         .eq('game_id', pick.game_id)
         .eq('pick_type', pick.pick_type)
-        .eq('game_date', todayStr)
+        .eq('game_date', gameDateStr)
     }
 
     const { error } = await supabase.from('picks').insert(picksToUpsert)
@@ -185,7 +213,7 @@ export default function Picks() {
         </div>
 
         {noOdds && isTomorrow ? (
-          <p className="text-gray-500 text-sm text-center py-4">Odds not yet available — check back later</p>
+          <p className="text-gray-500 text-sm text-center py-4">Odds not yet available — check back tomorrow morning</p>
         ) : (
           <>
             <div className="grid grid-cols-3 gap-2 text-sm font-bold text-gray-400 mb-2 text-center">
@@ -199,23 +227,23 @@ export default function Picks() {
               <div className="flex gap-2">
                 <button
                   onClick={() => handlePick(game, 'ml_rl', `${game.away_team} ML`, game.ml_away)}
-                  disabled={locked || isTomorrow}
-                  className={`flex-1 p-2 rounded text-center text-sm transition-colors ${isSelected(game.id, 'ml_rl', `${game.away_team} ML`) ? 'bg-blue-600' : 'bg-gray-700 hover:bg-gray-600'} ${isSaved(game.id, 'ml_rl') && isSelected(game.id, 'ml_rl', `${game.away_team} ML`) ? 'ring-2 ring-blue-400' : ''} ${locked || isTomorrow ? 'cursor-not-allowed' : ''}`}
+                  disabled={locked}
+                  className={`flex-1 p-2 rounded text-center text-sm transition-colors ${isSelected(game.id, 'ml_rl', `${game.away_team} ML`) ? 'bg-blue-600' : 'bg-gray-700 hover:bg-gray-600'} ${isSaved(game.id, 'ml_rl') && isSelected(game.id, 'ml_rl', `${game.away_team} ML`) ? 'ring-2 ring-blue-400' : ''} ${locked ? 'cursor-not-allowed' : ''}`}
                 >
                   ML {formatOdds(game.ml_away)}
                 </button>
                 <button
                   onClick={() => handlePick(game, 'ml_rl', `${game.away_team} RL ${game.rl_away_point}`, game.rl_away)}
-                  disabled={locked || isTomorrow}
-                  className={`flex-1 p-2 rounded text-center text-sm transition-colors ${isSelected(game.id, 'ml_rl', `${game.away_team} RL ${game.rl_away_point}`) ? 'bg-blue-600' : 'bg-gray-700 hover:bg-gray-600'} ${isSaved(game.id, 'ml_rl') && isSelected(game.id, 'ml_rl', `${game.away_team} RL ${game.rl_away_point}`) ? 'ring-2 ring-blue-400' : ''} ${locked || isTomorrow ? 'cursor-not-allowed' : ''}`}
+                  disabled={locked}
+                  className={`flex-1 p-2 rounded text-center text-sm transition-colors ${isSelected(game.id, 'ml_rl', `${game.away_team} RL ${game.rl_away_point}`) ? 'bg-blue-600' : 'bg-gray-700 hover:bg-gray-600'} ${isSaved(game.id, 'ml_rl') && isSelected(game.id, 'ml_rl', `${game.away_team} RL ${game.rl_away_point}`) ? 'ring-2 ring-blue-400' : ''} ${locked ? 'cursor-not-allowed' : ''}`}
                 >
                   {game.rl_away_point > 0 ? '+' : ''}{game.rl_away_point} {formatOdds(game.rl_away)}
                 </button>
               </div>
               <button
                 onClick={() => handlePick(game, 'over_under', `Over ${game.over_under}`, game.over_odds)}
-                disabled={locked || isTomorrow}
-                className={`p-2 rounded text-center text-sm transition-colors ${isSelected(game.id, 'over_under', `Over ${game.over_under}`) ? 'bg-green-600' : 'bg-gray-700 hover:bg-gray-600'} ${isSaved(game.id, 'over_under') && isSelected(game.id, 'over_under', `Over ${game.over_under}`) ? 'ring-2 ring-green-400' : ''} ${locked || isTomorrow ? 'cursor-not-allowed' : ''}`}
+                disabled={locked}
+                className={`p-2 rounded text-center text-sm transition-colors ${isSelected(game.id, 'over_under', `Over ${game.over_under}`) ? 'bg-green-600' : 'bg-gray-700 hover:bg-gray-600'} ${isSaved(game.id, 'over_under') && isSelected(game.id, 'over_under', `Over ${game.over_under}`) ? 'ring-2 ring-green-400' : ''} ${locked ? 'cursor-not-allowed' : ''}`}
               >
                 Over {game.over_under} {formatOdds(game.over_odds)}
               </button>
@@ -226,23 +254,23 @@ export default function Picks() {
               <div className="flex gap-2">
                 <button
                   onClick={() => handlePick(game, 'ml_rl', `${game.home_team} ML`, game.ml_home)}
-                  disabled={locked || isTomorrow}
-                  className={`flex-1 p-2 rounded text-center text-sm transition-colors ${isSelected(game.id, 'ml_rl', `${game.home_team} ML`) ? 'bg-blue-600' : 'bg-gray-700 hover:bg-gray-600'} ${isSaved(game.id, 'ml_rl') && isSelected(game.id, 'ml_rl', `${game.home_team} ML`) ? 'ring-2 ring-blue-400' : ''} ${locked || isTomorrow ? 'cursor-not-allowed' : ''}`}
+                  disabled={locked}
+                  className={`flex-1 p-2 rounded text-center text-sm transition-colors ${isSelected(game.id, 'ml_rl', `${game.home_team} ML`) ? 'bg-blue-600' : 'bg-gray-700 hover:bg-gray-600'} ${isSaved(game.id, 'ml_rl') && isSelected(game.id, 'ml_rl', `${game.home_team} ML`) ? 'ring-2 ring-blue-400' : ''} ${locked ? 'cursor-not-allowed' : ''}`}
                 >
                   ML {formatOdds(game.ml_home)}
                 </button>
                 <button
                   onClick={() => handlePick(game, 'ml_rl', `${game.home_team} RL ${game.rl_home_point}`, game.rl_home)}
-                  disabled={locked || isTomorrow}
-                  className={`flex-1 p-2 rounded text-center text-sm transition-colors ${isSelected(game.id, 'ml_rl', `${game.home_team} RL ${game.rl_home_point}`) ? 'bg-blue-600' : 'bg-gray-700 hover:bg-gray-600'} ${isSaved(game.id, 'ml_rl') && isSelected(game.id, 'ml_rl', `${game.home_team} RL ${game.rl_home_point}`) ? 'ring-2 ring-blue-400' : ''} ${locked || isTomorrow ? 'cursor-not-allowed' : ''}`}
+                  disabled={locked}
+                  className={`flex-1 p-2 rounded text-center text-sm transition-colors ${isSelected(game.id, 'ml_rl', `${game.home_team} RL ${game.rl_home_point}`) ? 'bg-blue-600' : 'bg-gray-700 hover:bg-gray-600'} ${isSaved(game.id, 'ml_rl') && isSelected(game.id, 'ml_rl', `${game.home_team} RL ${game.rl_home_point}`) ? 'ring-2 ring-blue-400' : ''} ${locked ? 'cursor-not-allowed' : ''}`}
                 >
                   {game.rl_home_point > 0 ? '+' : ''}{game.rl_home_point} {formatOdds(game.rl_home)}
                 </button>
               </div>
               <button
                 onClick={() => handlePick(game, 'over_under', `Under ${game.over_under}`, game.under_odds)}
-                disabled={locked || isTomorrow}
-                className={`p-2 rounded text-center text-sm transition-colors ${isSelected(game.id, 'over_under', `Under ${game.over_under}`) ? 'bg-green-600' : 'bg-gray-700 hover:bg-gray-600'} ${isSaved(game.id, 'over_under') && isSelected(game.id, 'over_under', `Under ${game.over_under}`) ? 'ring-2 ring-green-400' : ''} ${locked || isTomorrow ? 'cursor-not-allowed' : ''}`}
+                disabled={locked}
+                className={`p-2 rounded text-center text-sm transition-colors ${isSelected(game.id, 'over_under', `Under ${game.over_under}`) ? 'bg-green-600' : 'bg-gray-700 hover:bg-gray-600'} ${isSaved(game.id, 'over_under') && isSelected(game.id, 'over_under', `Under ${game.over_under}`) ? 'ring-2 ring-green-400' : ''} ${locked ? 'cursor-not-allowed' : ''}`}
               >
                 Under {game.over_under} {formatOdds(game.under_odds)}
               </button>
@@ -266,7 +294,6 @@ export default function Picks() {
         </div>
         <p className="text-gray-400 text-sm mb-6">{activeTab === 'today' ? todayLabel : tomorrowLabel}</p>
 
-        {/* Tabs */}
         <div className="flex mb-6 bg-gray-800 rounded-lg p-1">
           <button
             onClick={() => setActiveTab('today')}
@@ -291,7 +318,7 @@ export default function Picks() {
           <GameCard key={game.id} game={game} isTomorrow={activeTab === 'tomorrow'} />
         ))}
 
-        {activeTab === 'today' && games.length > 0 && (
+        {games.length > 0 && (
           <button
             onClick={submitPicks}
             disabled={submitting}

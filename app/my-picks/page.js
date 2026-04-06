@@ -22,20 +22,18 @@ export default function MyPicks() {
   }, [])
 
   const fetchPicks = async (userId) => {
-    const today = new Date().toISOString().split('T')[0]
-
     const { data: active } = await supabase
       .from('picks')
       .select('*, games(*)')
       .eq('user_id', userId)
-      .eq('game_date', today)
-      .order('created_at', { ascending: true })
+      .eq('result', 'pending')
+      .order('game_date', { ascending: true })
 
     const { data: history } = await supabase
       .from('picks')
       .select('*, games(*)')
       .eq('user_id', userId)
-      .lt('game_date', today)
+      .neq('result', 'pending')
       .order('game_date', { ascending: false })
 
     const groupByGame = (picks) => {
@@ -147,7 +145,7 @@ export default function MyPicks() {
         {!loading && activeTab === 'active' && (
           <div>
             {activePicks.length === 0 ? (
-              <p className="text-gray-400 text-center py-8">No picks for today yet.
+              <p className="text-gray-400 text-center py-8">No active picks yet.
                 <button onClick={() => router.push('/picks')} className="text-blue-400 hover:underline mt-2 block">Make your picks →</button>
               </p>
             ) : (
