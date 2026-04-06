@@ -2,22 +2,22 @@ name: MLB Automation
 
 on:
   schedule:
-    - cron: '0 11 * * *'  # 4 AM Arizona (11 AM UTC)
-    - cron: '*/30 18-5 * * *'  # Every 30 min during game hours (UTC)
-  workflow_dispatch:  # Allow manual runs
+    - cron: '0 11 * * *'
+    - cron: '0 18-23 * * *'
+    - cron: '0 0-5 * * *'
+  workflow_dispatch:
 
 jobs:
   fetch-odds:
     runs-on: ubuntu-latest
+    if: github.event.schedule == '0 11 * * *'
     steps:
-      - name: Fetch odds from The Odds API
-        run: |
-          curl -s https://mlb-picks-gray.vercel.app/api/fetch-odds
-        if: github.event.schedule == '0 11 * * *'
+      - name: Fetch odds
+        run: curl -s https://mlb-picks-gray.vercel.app/api/fetch-odds
 
   update-scores:
     runs-on: ubuntu-latest
+    if: github.event.schedule != '0 11 * * *'
     steps:
-      - name: Update live scores and grade picks
-        run: |
-          curl -s https://mlb-picks-gray.vercel.app/api/update-scores
+      - name: Update scores
+        run: curl -s https://mlb-picks-gray.vercel.app/api/update-scores
